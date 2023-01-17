@@ -1,2 +1,2 @@
 from .vectorize import *
-from .fastrand import *
+# from .fastrand import *

@@ -17,7 +17,7 @@ from cython.operator cimport dereference as deref, preincrement as inc
 from cpython.ref cimport PyObject  # somewhere at the top
 from cpython cimport PyObject_GetAttr, PyObject_GetAttrString, \
     PyObject_GetItem, PyList_GetItem, PyList_Size, PyObject_SetAttr, PyObject_CallFunction, PyObject_CallFunctionObjArgs
-from .fastrand import sample
+# from .fastrand import sample
 
 AgentGeneric = TypeVar('AgentGeneric')
 if TYPE_CHECKING:
@@ -304,7 +304,7 @@ cdef class AgentList(BaseAgentContainer):
         :param sample_num:
         :return:
         """
-        return sample(self.agents, sample_num)
+        return random.sample(self.agents, sample_num)
         
 
     cpdef remove(self, Agent agent) except *:
