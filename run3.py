@@ -41,7 +41,12 @@ class MyModel(Model):
                 # print()
 
     def run(self):
-        self.step()
+        for i in range(3):
+            t0 = time.time()
+            self.step()
+            t1 = time.time()
+            print('step time', t1-t0)
+        
         # for i in range(100):
         #     self.step()
         # sum = 0

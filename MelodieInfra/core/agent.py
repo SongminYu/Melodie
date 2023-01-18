@@ -14,6 +14,13 @@ class Element:
             assert paramName in self.__dict__.keys(), f"param named {paramName}, value {paramValue} not in Agent.params:{self.__dict__.keys()}"
             setattr(self, paramName, paramValue)
 
+    def to_json(self):
+        d = {}
+        props = self.__dict__.keys()
+        for property in props:
+            attr = getattr(self, property)
+            d[property] = attr
+        return d
 
 class Agent(Element):
     def __init__(self, agent_id: int):

@@ -1,3 +1,6 @@
+import { AgentList } from "./agent_list";
+import { Grid } from "./grid";
+const Parallel = require('paralleljs');
 function patchArrayMethods() {
     (Array.prototype as any)['append'] = Array.prototype.push
 }
@@ -61,6 +64,7 @@ export interface AgentContainerComponent extends BaseComponent {
     type: "agent_list"
     agent_cls: string
     agents: { [key: string]: any }[]
+    category: string
 }
 
 export interface GridComponent extends BaseComponent {
@@ -69,7 +73,10 @@ export interface GridComponent extends BaseComponent {
     height: number
     spots: { [key: string]: any }[]
     spot_cls: string
-
+    // existed_agents: { [key: string]: { [key: string]: [number, number] } }
+    // agent_ids: { [key: string]: number[][] }
+    categories: string[]
+    // agent_list_names: string[]
     // agents: { [key: string]: any }[]
 }
 
@@ -96,6 +103,15 @@ function create2DArray(height: number, width: number): null[][] {
     return arr
 }
 
+function getAgentListData(data: ModelData, category: string): AgentContainerComponent {
+    const componentData = data.components.find((item) => item.type == 'agent_list' && item.category == category)
+    if (componentData != null) {
+        return (componentData as unknown as AgentContainerComponent)
+    } else {
+        throw Error(`category ${category} does not exist!`)
+    }
+}
+
 function unmarshallModel(data: ModelData) {
     const model = new (eval(data.model_cls))()
     // model.setup()
@@ -103,6 +119,7 @@ function unmarshallModel(data: ModelData) {
     for (const k in data.scenario.data) {
         model.scenario[k] = data.scenario.data[k]
     }
+    const agentLists: { [key: string]: AgentList } = {}
     for (const component of data.components) {
         if (component.type == "environment") {
             model.environment = new (eval(component['cls']))()
@@ -120,11 +137,36 @@ function unmarshallModel(data: ModelData) {
                 agents.push(agent)
             }
             model[component.prop_name].agents = agents
+            agentLists[component.category] = model[component.prop_name]
         } else if (component.type == 'grid') {
-            const grid = new (eval(component['cls']))(
-                (eval(component.spot_cls)), component.width, component.height, model)
+            const grid: Grid = new (eval(component['cls']))(
+                (eval(component.spot_cls)), model.scenario)
+            grid._width = component.width
+            grid._height = component.height
             model[component.prop_name] = grid
             grid._spots = create2DArray(component.height, component.width)
+            for (const category of component.categories) {
+                const agentList = agentLists[category]
+                console.log(agentLists, category)
+                for (const agent of agentList.agents) {
+                    grid.add_agent(agent)
+                }
+                // const agentListData = getAgentListData(data, category)
+                // for()
+            }
+            // grid._existed_agents = component.existed_agents
+            // grid._agent_ids = {}
+            // for (const key in component.existed_agents) {
+            //     grid._agent_ids[key] = []
+            //     for (let i = 0; i < component.width * component.height; i++) {
+            //         const set = new Set()
+            //         for (const agent_id of component.agent_ids[key][i]) {
+            //             set.add(agent_id)
+            //         }
+            //         grid._agent_ids[key].push(set)
+
+            //     }
+            // }
             const spot_type = (eval(component['spot_cls']))
             for (const spotData of component.spots) {
                 const { y, x } = spotData
@@ -139,4 +181,21 @@ function unmarshallModel(data: ModelData) {
     }
     return model
 }
-(window as any)['unmarshallModel'] = unmarshallModel
+(window as any)['unmarshallModel'] = unmarshallModel;
+(window as any)['set'] = () => new Set()
+const l = []
+for (let i = 0; i < 1000; i++) {
+    l.push(i)
+}
+// let p = new Parallel(l, { env: { a: 0 }, envNamespace: 'parallel' });
+// const log = function () { console.log(arguments); };
+// // One gotcha: anonymous functions cannot be serialzed
+// // If you want to do recursion, make sure the function
+// // is named appropriately
+// function fib(n: number): number {
+//     console.log(n, AgentList);
+//     // (global as any).parallel.a += 1;
+//     return n;
+// };
+// p.map(fib).then(log)
+// Logs the first 7 Fibonnaci numbers, woot!

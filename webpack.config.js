@@ -1,4 +1,5 @@
 // webpack4的配置
+const NodePolyfillPlugin = require('node-polyfill-webpack-plugin')
 module.exports = {
     // webpack4需要添加这个配置，development为开发环境，production为生产环境
     mode: "development",
@@ -10,6 +11,7 @@ module.exports = {
     resolve: {
         extensions: ['.tsx', '.ts', '.js'],
     },
+    plugins: [new NodePolyfillPlugin()],
     module: {
         rules: [
             {

@@ -32,12 +32,12 @@ try:
             language="c++",
             # extra_compile_args=["-std=c++11"]
         ),
-        Extension(
-            "Melodie.boost.agent_list",
-            ["Melodie/boost/agent_list.pyx"],
-            language="c++",
-            # extra_compile_args=["-std=c++11"]
-        ),
+        # Extension(
+        #     "Melodie.boost.agent_list",
+        #     ["Melodie/boost/agent_list.pyx"],
+        #     language="c++",
+        #     # extra_compile_args=["-std=c++11"]
+        # ),
         # Extension(
         #     "Melodie.boost.grid",
         #     ["Melodie/boost/grid.pyx"],

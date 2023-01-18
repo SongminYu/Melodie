@@ -30,6 +30,9 @@ class Environment extends Element {
         }
         return d;
     }
+    _setup() {
+        this.setup();
+    }
 }
 export {Environment};
 

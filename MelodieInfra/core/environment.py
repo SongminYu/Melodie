@@ -2,7 +2,6 @@ from .types import List, Dict, Optional
 from .agent import Element
 
 
-
 class Environment(Element):
     def __init__(self):
         super().__init__()
@@ -29,5 +28,9 @@ class Environment(Element):
         for property in properties:
             d[property] = self.__dict__[property]
         return d
+
+    def _setup(self):
+        self.setup()
+
 
 __all__ = ['Environment']

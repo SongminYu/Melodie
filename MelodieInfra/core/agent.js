@@ -49,6 +49,17 @@ class Element {
             this[paramName] = paramValue;
         }
     }
+    to_json() {
+        var attr, d, props;
+        d = {};
+        props = this.__dict__.keys();
+        for (var property, _pj_c = 0, _pj_a = props, _pj_b = _pj_a.length; (_pj_c < _pj_b); _pj_c += 1) {
+            property = _pj_a[_pj_c];
+            attr = this[property];
+            d[property] = attr;
+        }
+        return d;
+    }
 }
 class Agent extends Element {
     constructor(agent_id) {

@@ -1,4 +1,5 @@
-from .types import ClassVar, Set, Dict, List, Tuple
+from .api import floor, randint, random, iterable, lru_cache
+from .types import ClassVar, Dict, List, Tuple
 
 from .agent import Agent
 
@@ -9,20 +10,6 @@ class GridItem(Agent):
         self.grid = grid
         self.x = x
         self.y = y
-
-    # def set_params(self, params):
-    #     """
-
-    #     :param params:
-    #     :return:
-    #     """
-    #     for paramName, paramValue in params.items():
-    #         assert hasattr(
-    #             self, paramName), f"property named {paramName} not in {self.__class__.__name__}"
-    #         setattr(self, paramName, paramValue)
-
-    def __repr__(self):
-        return f"<{self.__class__.__name__} 'x': {self.x}, 'y': {self.y}>"
 
 
 class GridAgent(GridItem):
@@ -57,7 +44,7 @@ class GridAgent(GridItem):
 
 
 class Spot(GridItem):
-    def __init__(self, spot_id: int, grid: Grid, x: int = 0, y: int = 0):
+    def __init__(self, spot_id: int, grid: "Grid", x: int = 0, y: int = 0):
         super().__init__(spot_id, grid, x, y)
         self.grid = grid
         self.colormap = 0
@@ -69,9 +56,6 @@ class Spot(GridItem):
         :return: a list of grid agent.
         """
         return self.grid.get_spot_agents(self)
-
-    def __repr__(self):
-        return f"<{self.__class__.__name__} 'x': {self.x}, 'y': {self.y}, 'colormap': {self.colormap}, 'payload' : {self.__dict__}>"
 
     def get_style(self):
         return {
@@ -85,7 +69,7 @@ class Grid:
     Grid contains many `Spot`s, each `Spot` could contain several agents.
     """
 
-    def __init__(self, spot_cls: ClassVar[Spot], width: int, height: int, wrap=True, caching=True):
+    def __init__(self, spot_cls: ClassVar[Spot], scenario=None):
         """
         :param spot_cls: The class of Spot
         :param width: The width of Grid
@@ -93,29 +77,70 @@ class Grid:
         :param wrap: If true, the coordinate overflow will be mapped to another end.
         :param caching: If true, the neighbors and bound check results will be cached to avoid re-computing.
         """
-        self.width = width
-        self.height = height
-        self.wrap = wrap
+        self._width = -1
+        self._height = -1
+        self._wrap = False
+        self._caching = True
+        self._multi = False
+
         self._spot_cls = spot_cls
         self._existed_agents: Dict[str, Dict[int, Tuple[int, int]]] = {}
-        self._agent_ids: Dict[str, List[Set[int]]] = {}
+        self._agent_ids: "Dict[str, List[Set[int]]]" = {}
         self._spots = []
-        self.caching = caching
+        self.scenario = scenario
+        self._empty_spots = set()
         self._agent_containers = {}
+        self._cache = {}
 
     def init_grid(self):
-        self._spots = [[new(self._spot_cls(self._convert_to_1d(x, y), x, y))
-                        for x in range(self.width)] for y in range(self.height)]
-        for x in range(self.width):
-            for y in range(self.height):
+        SpotCls = self._spot_cls
+        self._spots = [[SpotCls(self._convert_to_1d(x, y), self, x, y)
+                        for x in range(self._width)] for y in range(self._height)]
+        for x in range(self._width):
+            for y in range(self._height):
                 self._spots[y][x].setup()
-        # [set() for i in range(width * height)]
+                self._empty_spots.add(self._convert_to_1d(x, y))
+        self._roles_list = [[0 for j in range(4)] for i in range(
+            self._width * self._height)]
+        # if self._caching:
+        #     self.enable_caching()
 
-        # if caching:
-        #     self.get_neighbors = functools.lru_cache(
-        #         self.width * self.height)(self.get_neighbors)
-        #     self._bound_check = functools.lru_cache(
-        #         self.width * self.height)(self._bound_check)
+    # def enable_caching(self):
+    #     self.get_neighbors = lru_cache(
+    #         self._width * self._height)(self.get_neighbors)
+        # self._bound_check = lru_cache(
+        #     self._width * self._height)(self._bound_check)
+
+    def setup_params(self, width: int, height: int, wrap=True, caching=True, multi=True):
+        """
+        Setup the parameters of grid.
+
+        :param width: int
+        :param height: int
+        :param wrap: bool, True by default.
+        If True, GridAgent will re-enter the grid on the other side if it moves out of the grid on one side.
+        :param caching: bool, True by default. If true, the grid caches the neighbor of each spot.
+        :param multi: bool, True by default. If true, more than one agent could stand on one spot. If false, error will
+        be raised when attempting to place multiple agents on one spot.
+        :return: None
+        """
+        self._width = width
+        self._height = height
+        self._wrap = wrap
+        self._caching = caching
+        self._multi = multi
+        self.init_grid()
+
+    def setup(self):
+        """
+        Be sure to inherit this function.
+
+        :return: None
+        """
+        pass
+
+    def _setup(self):
+        self.setup()
 
     def add_category(self, category_name: str):
         """
@@ -124,7 +149,7 @@ class Grid:
         :return:
         """
         self._agent_ids[category_name] = [set()
-                                          for i in range(self.width * self.height)]
+                                          for i in range(self._width * self._height)]
         self._existed_agents[category_name] = {}
 
     def get_spot(self, x, y) -> "Spot":
@@ -138,7 +163,7 @@ class Grid:
         x, y = self._bound_check(x, y)
         return self._spots[y][x]
 
-    def get_agent_ids(self, category: str, x: int, y: int) -> Set[int]:
+    def get_agent_ids(self, category: str, x: int, y: int) -> "Set[int]":
         """
         Get all agent of a specific category from the spot at (x, y)
         :param category:
@@ -152,23 +177,26 @@ class Grid:
         return agent_ids
 
     def _convert_to_1d(self, x, y):
-        return x * self.height + y
+        return x * self._height + y
+
+    def _num_to_2d_coor(self, num: int):
+        return floor(num / self._height), num % self._width
 
     def _in_bounds(self, x, y):
-        return (0 <= x < self.width) and (0 <= y <= self.height)
+        return (0 <= x < self.width) and (0 <= y <= self._height)
 
     def _get_category_of_agents(self, category_name: str):
-        category = self._existed_agents.get(category_name)
-        if category is None:
-            raise ValueError(f"Category {category_name} is not registered!")
-        return category
+        # category = self._existed_agents.get(category_name)
+
+        # raise ValueError(f"Category {category_name} is not registered!")
+        return self._existed_agents[category_name]
 
     def _bound_check(self, x, y):
-        if self.wrap:
+        if self._wrap:
             return self.coords_wrap(x, y)
-        if not (0 <= x < self.width):
+        if not (0 <= x < self._width):
             raise IndexError("grid index x was out of range")
-        elif not (0 <= y <= self.height):
+        elif not (0 <= y <= self._height):
             raise IndexError("grid index y was out of range")
         else:
             return x, y
@@ -180,9 +208,9 @@ class Grid:
         :param y:
         :return:
         """
-        x_wrapped, y_wrapped = x % self.width, y % self.height
-        x_wrapped = x_wrapped if x_wrapped >= 0 else self.width + x_wrapped
-        y_wrapped = y_wrapped if y_wrapped >= 0 else self.height + y_wrapped
+        x_wrapped, y_wrapped = x % self._width, y % self._height
+        x_wrapped = x_wrapped if x_wrapped >= 0 else self._width + x_wrapped
+        y_wrapped = y_wrapped if y_wrapped >= 0 else self._height + y_wrapped
         return x_wrapped, y_wrapped
 
     def _get_neighbor_positions(self, x, y, radius: int = 1, moore=True, except_self=True) -> List[Tuple[int, int]]:
@@ -198,16 +226,38 @@ class Grid:
         """
         x, y = self._bound_check(x, y)
         neighbors = []
-        for dx in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                if not moore and abs(dx) + abs(dy) > radius:
-                    continue
-                if not self.wrap and not self._in_bounds(x + dx, y + dy):
-                    continue
-                if dx == 0 and dy == 0 and except_self:
-                    continue
-                neighbors.append(self._bound_check(x + dx, y + dy))
-        return neighbors
+        # s = except_self+moore*2**1+radius*2**10+x*2**20+y*2**30
+        s = f"{except_self}+{moore}+{radius}+{x}+{y}"
+        if s not in self._cache:
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if not moore and abs(dx) + abs(dy) > radius:
+                        continue
+                    if not self._wrap and not self._in_bounds(x + dx, y + dy):
+                        continue
+                    if dx == 0 and dy == 0 and except_self:
+                        continue
+                    neighbors.append(self._bound_check(x + dx, y + dy))
+            self._cache[s] = neighbors
+            return neighbors
+        else:
+            return self._cache[s]
+        # s = except_self+moore*2**1+radius*2**10+x*2**20+y*2**30
+        # if s not in self._cache:
+        #     neighbors = []
+        #     for dx in range(-radius, radius + 1):
+        #         for dy in range(-radius, radius + 1):
+        #             if not moore and abs(dx) + abs(dy) > radius:
+        #                 continue
+        #             if not self._wrap and not self._in_bounds(x + dx, y + dy):
+        #                 continue
+        #             if dx == 0 and dy == 0 and except_self:
+        #                 continue
+        #             neighbors.append(self._bound_check(x + dx, y + dy))
+        #     self._cache[s] = neighbors
+        #     return neighbors
+        # else:
+        #     return self._cache[s]
 
     def _get_neighborhood(self, x, y, radius=1, moore=True, except_self=True):
         """
@@ -228,7 +278,21 @@ class Grid:
     def get_spot_neighborhood(self, spot, radius=1, moore=True, except_self=True):
         return self._get_neighborhood(spot.x, spot.y, radius, moore, except_self)
 
-    def add_agent(self, agent_id: int, category: str, x: int, y: int):
+    def add_agent(self, agent: GridAgent):
+        """
+        Add an agent to the grid
+
+        :param agent: An GridAgent object.
+        :param category: A string, the name of category. The category should be registered.
+        :return:
+        """
+        # if not isinstance(agent, GridAgent):
+        #     raise TypeError(
+        #         f"Parameter \`agent\` should be of type {GridAgent.__name__} ")
+        agent.grid = self
+        self._add_agent(agent.id, agent.category, agent.x, agent.y)
+
+    def _add_agent(self, agent_id: int, category: str, x: int, y: int):
         """
         Add agent onto the grid
         :param agent_id:
@@ -238,19 +302,29 @@ class Grid:
         :return:
         """
         x, y = self._bound_check(x, y)
+        if category not in self._existed_agents:
+            self._existed_agents[category] = {}
+        if category not in self._agent_ids:
+            l = []
+            for _ in range(self._width*self._height):
+                l.append(set())
+            self._agent_ids[category] = l  # = [set()
+            #  for _ in range(self._width * self._height)]
 
         category_of_agents = self._get_category_of_agents(category)
 
-        if agent_id in category_of_agents.keys():
+        if agent_id in category_of_agents:
             raise ValueError(
                 f"Agent with id: {agent_id} already exists on grid!")
-
-        if agent_id in self._agent_ids[category][self._convert_to_1d(x, y)]:
+        pos_1d = self._convert_to_1d(x, y)
+        if agent_id in self._agent_ids[category][pos_1d]:
             raise ValueError(
                 f"Agent with id: {agent_id} already exists at position {(x, y)}!")
         else:
-            self._agent_ids[category][self._convert_to_1d(x, y)].add(agent_id)
+            self._agent_ids[category][pos_1d].add(agent_id)
             self._existed_agents[category][agent_id] = (x, y)
+        if pos_1d in self._empty_spots:
+            self._empty_spots.remove(pos_1d)
 
     def _remove_agent(self, agent_id: int, category: str, x: int, y: int):
         x, y = self._bound_check(x, y)
@@ -260,29 +334,32 @@ class Grid:
         if agent_id not in category_of_agents.keys():
             raise ValueError(
                 f"Agent with id: {agent_id} does not exist on grid!")
-
+        pos_1d = self._convert_to_1d(x, y)
         if agent_id not in self._existed_agents[category]:
             raise ValueError("Agent does not exist on the grid!")
-        if agent_id not in self._agent_ids[category][self._convert_to_1d(x, y)]:
+        if agent_id not in self._agent_ids[category][pos_1d]:
             print("Melodie-boost error occured. agent_id:", agent_id, "x:", x, "y:",
                   y)
             raise IndexError("agent_id does not exist on such coordinate.")
         else:
-            self._agent_ids[category][self._convert_to_1d(
-                x, y)].remove(agent_id)
+            self._agent_ids[category][pos_1d].remove(agent_id)
             self._existed_agents[category].pop(agent_id)
 
-    def remove_agent(self, agent_id: int, category: str):
+        agents = self._get_spot_agents(pos_1d)
+        if len(agents) == 0:
+            self._empty_spots.add(pos_1d)
+
+    def remove_agent(self, agent: GridAgent):
         """
         Remove agent from the grid
-        :param agent_id:
-        :param category:
+
+        :param agent:
         :return:
         """
-        source_x, source_y = self.get_agent_pos(agent_id, category)
-        self._remove_agent(agent_id, category, source_x, source_y)
+        source_x, source_y = self.get_agent_pos(agent.id, agent.category)
+        self._remove_agent(agent.id, agent.category, source_x, source_y)
 
-    def move_agent(self, agent_id, category: str, target_x, target_y):
+    def move_agent(self, agent: GridAgent, target_x, target_y):
         """
         Move agent to target position.
         :param agent_id:
@@ -291,9 +368,10 @@ class Grid:
         :param target_y:
         :return:
         """
-        source_x, source_y = self.get_agent_pos(agent_id, category)
-        self._remove_agent(agent_id, category, source_x, source_y)
-        self.add_agent(agent_id, category, target_x, target_y)
+        source_x, source_y = self.get_agent_pos(agent.id, agent.category)
+        self._remove_agent(agent.id, agent.category, source_x, source_y)
+        self._add_agent(agent.id, agent.category, target_x, target_y)
+        agent.x, agent.y = target_x, target_y
 
     def get_agent_pos(self, agent_id: int, category: str) -> Tuple[int, int]:
         """
@@ -304,36 +382,120 @@ class Grid:
         """
         return self._existed_agents[category][agent_id]
 
-    def to_2d_array(self, attr_name: str) -> np.ndarray:
+    def height(self):
         """
-        Collect attribute of each spot and write the attribute value into an 2d np.array.
-        Notice:
-        - The attribute to collect should be float/int/bool, not other types such as str.
-        - If you would like to get an element from the returned array, please write like this:
-         ```python
-         arr = self.to_2d_array('some_attr')
-         y = 10
-         x = 5
-         spot_at_x_5_y_10 = arr[y][x] # CORRECT. Get the some_attr value of spot at `x = 5, y = 10`
-         spot_at_x_5_y_10 = arr[x][y] # INCORRECT. You will get the value of spot at `x = 10, y = 5`
-         ```
-        :param attr_name: the attribute name to collect for this model.
-        :return:
-        """
-        return vectorize_2d(self._spots, attr_name)
+        Get the height of grid
 
-    def get_roles(self):
-        grid_roles = np.zeros((self.height * self.width, 4))
-        for x in range(self.width):
-            for y in range(self.height):
+        :return: height, an ``int``
+        """
+        return self._height
+
+    def width(self):
+        """
+        Get the width of grid
+
+        :return: width, an ``int``
+        """
+        return self._width
+
+    def get_neighbors(self, agent: GridAgent, radius=1, moore=True, except_self=True):
+        """
+        Get the neighbors of one spot at (x, y).
+
+        :param x:
+        :param y:
+        :param radius:
+        :param moore:
+        :param except_self:
+        :return:  A list of the tuple: (`Agent category`, `Agent id`).
+        """
+        neighbor_ids = []
+        neighbor_positions = self._get_neighbor_positions(
+            agent.x, agent.y, radius, moore, except_self)
+        for neighbor_pos in neighbor_positions:
+            x, y = neighbor_pos
+            agent_ids = self.get_spot_agents(
+                self.get_spot(x, y)
+            )
+            neighbor_ids.extend(agent_ids)
+        return neighbor_ids
+
+    def get_spot_agents(self, spot: Spot):
+        """
+        Get agents on the spot.
+
+        """
+        return self._get_spot_agents(spot.id)
+
+    def _get_spot_agents(self, spot_id: int):
+        l = []
+        for item in iterable(self._agent_ids.items()):
+            category, spot_set_list = item
+            for agent_id in spot_set_list[spot_id]:
+                l.append((category, agent_id))
+        return l
+
+    def get_colormap(self):
+        """
+        Get the role of each spot.
+
+        :return: A tuple. The first item is a nested list for spot roles, and the second item is a dict for agent roles.
+        """
+
+        agents_series_data = {}
+        for category in self._agent_ids.keys():
+            agents_series_data[category] = []
+        for x in range(self._width):
+            for y in range(self._height):
                 spot = self.get_spot(x, y)
-                # role = spot.role
                 pos_1d = self._convert_to_1d(x, y)
-                grid_roles[pos_1d, 0] = x
-                grid_roles[pos_1d, 1] = y
-                grid_roles[pos_1d, 2] = 0
-                grid_roles[pos_1d, 3] = spot.role
-        return grid_roles
+                role_pos_list = self._roles_list[pos_1d]
+                role_pos_list[0] = x
+                role_pos_list[1] = y
+                role_pos_list[2] = 0
+                role_pos_list[3] = spot.colormap
+                for agent_desc in self.get_spot_agents(spot):
+                    agent_category, agent_id = agent_desc
+                    series_data_one_category = agents_series_data[agent_category]
+                    series_data_one_category.append({
+                        'value': [x, y],
+                        'id': agent_id,
+                        'category': agent_category,
+                    })
+
+        return self._roles_list, agents_series_data
+
+    def spots_to_json(self):
+        """
+        Convert spots in this grid into a list of json-serializable dict
+
+        :return: JSON serializable list
+        """
+        spots_serialized = []
+        for x in range(self.width()):
+            for y in range(self.height()):
+                spot = self._spots[y][x]
+                spots_serialized.append(spot.to_json())
+        return spots_serialized
+
+    def get_empty_spots(self):
+        """
+        Get all empty spots from grid.
+
+        :return: a list of empty spot coordinates.
+        """
+        positions = []
+        for spot_pos_1d in self._empty_spots:
+            positions.append(self._num_to_2d_coor(spot_pos_1d))
+        return positions
+
+    def find_empty_spot(self):
+        rand_value = randint(0, len(self._empty_spots) - 1)
+        i = 0
+        for item in self._empty_spots:
+            if i == rand_value:
+                return self._num_to_2d_coor(item)
+            i += 1
 
     def setup_agent_locations(self, category, initial_placement="direct") -> None:
         """
@@ -356,10 +518,11 @@ class Grid:
         assert category is not None, f"Agent Container was None"
         agent = category[0]
         category_id = agent.category
-        assert 0 <= category_id < 100, f"Category ID {category_id} should be a int between [0, 100)"
-        assert self._agent_containers[category_id] is None, f"Category ID {category_id} already existed!"
+        # assert 0 <= category_id < 100, f"Category ID {category_id} should be a int between [0, 100)"
+        assert category_id not in self._agent_containers, f"Category ID {category_id} already existed!"
         self._agent_containers[category_id] = category
-        assert initial_placement in {"random_single", "direct"}, f"Invalid initial placement '{initial_placement}' "
+        assert initial_placement in [
+            "random_single", "direct"], f"Invalid initial placement '{initial_placement}' "
         if initial_placement == "random_single":
             for agent in category:
                 pos = self.find_empty_spot()
@@ -369,6 +532,45 @@ class Grid:
         elif initial_placement == "direct":
             for agent in category:
                 self.add_agent(agent)
+
+    # def set_spot_property(self, attr_name: str, array_2d):
+    #     """
+    #     Set property from an 2d-numpy-array to each spot.
+
+    #     """
+    #     assert len(
+    #         array_2d.shape) == 2, f"The spot property array should be 2-dimensional, but got shape: {array_2d.shape}"
+    #     assert len(
+    #         array_2d) == self._height, f"The rows of spot property matrix is {len(array_2d)} while the height of grid is {self._height}."
+    #     assert len(
+    #         array_2d[0]) == self._width, f"The columns of spot property matrix is {len(array_2d[0])} while the width of grid is {self._width}."
+    #     for y, row in enumerate(array_2d):
+    #         for x, value in enumerate(row):
+    #             spot = self.get_spot(x, y)
+    #             setattr(spot, attr_name, value)
+
+    def rand_move_agent(self, agent: GridAgent, category, range_x, range_y):
+        """
+        Randomly move an agent with maximum movement `range_x` in x axis and `range_y` in y axis.
+
+        :param agent: Must be `Melodie.GridAgent`, not `Agent`. That is because `GridAgent` has predefined properties required in `Grid`.
+        :param range_x: The activity range of agent on the x axis.
+        :param range_y: The activity range of agent on the y axis.
+
+        For example, if the agent is at `(0, 0)`, `range_x=1` and `range_y=0`, the result can be
+        `(-1, 0), (0, 0) or (1, 0)`. The probability of these three outcomes are equal.
+
+        :return: (int, int), the new position
+        """
+        source_x = agent.x
+        source_y = agent.y
+        self._remove_agent(agent.id, category, source_x, source_y)
+        dx = floor((random()*(2*range_x+1))) - range_x
+        dy = floor((random()*(2*range_y+1))) - range_y
+        target_x = source_x+dx
+        target_y = source_y+dy
+        self._add_agent(agent.id, category, target_x, target_y)
+        return self.coords_wrap(target_x, target_y)
 
 
 __all__ = ['GridAgent', 'GridItem', 'Spot', 'Grid']

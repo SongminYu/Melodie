@@ -4,8 +4,9 @@ from MelodieInfra import *
 
 from .utils import *
 from .boost.agent_list import BaseAgentContainer, AgentList, AgentDict
-from .boost.basics import Environment, Element, Agent
-from .boost.grid import Grid, Spot, GridAgent
+from MelodieInfra.core.agent import Element, Agent
+from MelodieInfra.core.environment import Environment
+from .boost.grid import Grid, GridAgent, GridItem, Spot
 from .calibrator import Calibrator
 from .data_collector import DataCollector
 from .data_loader import DataLoader, DataFrameInfo, MatrixInfo
